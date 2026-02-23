@@ -18,10 +18,9 @@ import concurrent.futures
 import json
 import logging
 import time
+import traceback
 import uuid
 from datetime import datetime as dt
-
-import config
 
 from ck2milvusv2.ck.client import ClickHouse
 from ck2milvusv2.ck.meta import MetaLock, clear_checkpoint, drop_meta_tables, ensure_meta_db_and_tables, record_task_run
@@ -45,8 +44,14 @@ def init_meta(job: JobConfig | None = None, *, drop: bool = False) -> None:
         job: 可选的外部配置；默认使用 config.JOB。
         drop: 若为 True，先删除所有 meta 表再创建。
     """
+    import config
+
     job2 = job or config.JOB
     ck = ClickHouse(job2.clickhouse)
+
+    # ── 启动时打印 CK 版本，方便排查兼容性 ──
+    _log_ck_version(ck)
+
     if drop:
         drop_meta_tables(ck, job2.meta.database)
     ensure_meta_db_and_tables(ck, job2.meta.database)
@@ -54,8 +59,14 @@ def init_meta(job: JobConfig | None = None, *, drop: bool = False) -> None:
 
 def run_mode(*, mode: str, table_filter: list[str] | None, checkpoint_strategy: str) -> None:
     """执行指定 mode 的迁移任务（带锁 + 状态记录）。"""
+    import config
+
     job = config.JOB
     ck = ClickHouse(job.clickhouse)
+
+    # ── 启动时打印 CK 版本，方便排查兼容性 ──
+    _log_ck_version(ck)
+
     ensure_meta_db_and_tables(ck, job.meta.database)
 
     lock = MetaLock(
@@ -110,7 +121,7 @@ def run_mode(*, mode: str, table_filter: list[str] | None, checkpoint_strategy: 
             }),
         )
     except Exception as exc:  # noqa: BLE001
-        logger.exception("run failed")
+        logger.error("run failed，完整堆栈:\n%s", traceback.format_exc())
         record_task_run(
             ck, job.meta.database,
             run_id=run_id, job_name=job.job_name, mode=mode,
@@ -275,6 +286,28 @@ def _filter_tables(tables: list[TableConfig], table_filter: list[str] | None) ->
         return tables
     allowed = {x.strip() for x in table_filter if x.strip()}
     return [t for t in tables if t.source_table in allowed or t.target_collection in allowed]
+
+
+def _log_ck_version(ck: ClickHouse) -> None:
+    """查询并打印 ClickHouse 服务端版本，方便排查兼容性问题。
+
+    Args:
+        ck: ClickHouse 客户端。
+    """
+    try:
+        ver = ck.query_value("SELECT version() AS ver")
+        logger.info("ClickHouse server version: %s", ver)
+        # 解析主版本号，低于 22.8 时警告
+        parts = str(ver).split(".")
+        major, minor = int(parts[0]), int(parts[1]) if len(parts) > 1 else 0
+        if major < 22 or (major == 22 and minor < 8):
+            logger.warning(
+                "CK %s < 22.8，部分参数化查询类型（如 Array(String)）可能不受支持，"
+                "本程序已做兼容处理。",
+                ver,
+            )
+    except Exception:  # noqa: BLE001
+        logger.warning("无法获取 ClickHouse 版本: %s", traceback.format_exc())
 
 
 def _clear_all_checkpoints(ck: ClickHouse, job: JobConfig, tables: list[TableConfig], mode: str) -> None:

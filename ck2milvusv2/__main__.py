@@ -11,10 +11,9 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
+import traceback
 
 from ck2milvusv2.logging_utils import setup_logging
-from ck2milvusv2.models.factory import build_models
-from ck2milvusv2.pipeline.runner import init_meta, run_mode
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -68,61 +67,81 @@ def main(argv: list[str] | None = None) -> int:
     setup_logging(args.log_level)
     logger = logging.getLogger("ck2milvusv2")
 
+    # ── 延迟导入，确保 logging 就绪后才加载配置/模块 ──
+    try:
+        from ck2milvusv2.models.factory import build_models
+        from ck2milvusv2.pipeline.runner import init_meta, run_mode
+    except Exception:
+        logger.error("模块导入失败，完整堆栈:\n%s", traceback.format_exc())
+        return 1
+
     if args.cmd == "init":
-        init_meta(drop=not args.no_drop)
-        logger.info("meta init done (drop=%s)", not args.no_drop)
-        return 0
+        try:
+            init_meta(drop=not args.no_drop)
+            logger.info("meta init done (drop=%s)", not args.no_drop)
+            return 0
+        except Exception:
+            logger.error("init 失败，完整堆栈:\n%s", traceback.format_exc())
+            return 1
 
     if args.cmd == "run":
-        table_filter = [t.strip() for t in args.tables.split(",") if t.strip()] if args.tables else None
-        run_mode(mode=args.mode, table_filter=table_filter, checkpoint_strategy=str(args.checkpoint))
-        return 0
+        try:
+            table_filter = [t.strip() for t in args.tables.split(",") if t.strip()] if args.tables else None
+            run_mode(mode=args.mode, table_filter=table_filter, checkpoint_strategy=str(args.checkpoint))
+            return 0
+        except Exception:
+            logger.error("run 失败，完整堆栈:\n%s", traceback.format_exc())
+            return 1
 
     if args.cmd == "model-test":
-        import config
+        try:
+            import config
 
-        embedder, summarizer = build_models(config.JOB.model)
+            embedder, summarizer = build_models(config.JOB.model)
 
-        n = max(1, int(args.n))
-        batch = max(1, int(args.batch))
+            n = max(1, int(args.n))
+            batch = max(1, int(args.batch))
 
-        def _chunks(items: list[str], size: int):
-            """按 size 分批切分列表。
+            def _chunks(items: list[str], size: int):
+                """按 size 分批切分列表。
 
-            Args:
-                items: 输入列表。
-                size: 每批大小。
+                Args:
+                    items: 输入列表。
+                    size: 每批大小。
 
-            Yields:
-                子列表分块。
-            """
+                Yields:
+                    子列表分块。
+                """
 
-            for i in range(0, len(items), size):
-                yield items[i : i + size]
+                for i in range(0, len(items), size):
+                    yield items[i : i + size]
 
-        if args.kind in {"embed", "both"}:
-            texts = [f"样本{i+1}：用于embedding验证，含数字{i}与实体张三/李四。" for i in range(n)]
-            out = []
-            for ch in _chunks(texts, batch):
-                out.extend(embedder.embed(ch))
-            dim = len(out[0]) if out else 0
-            logger.info("model-test embed ok n=%d batch=%d dim=%d", n, batch, dim)
+            if args.kind in {"embed", "both"}:
+                texts = [f"样本{i+1}：用于embedding验证，含数字{i}与实体张三/李四。" for i in range(n)]
+                out = []
+                for ch in _chunks(texts, batch):
+                    out.extend(embedder.embed(ch))
+                dim = len(out[0]) if out else 0
+                logger.info("model-test embed ok n=%d batch=%d dim=%d", n, batch, dim)
 
-        if args.kind in {"llm", "both"}:
-            docs = [
-                (
-                    f"样本{i+1}：2026年2月6日，某地发生事件，涉及预算{i*10}万、周期{i+1}个月、负责人王五。"
-                    + " 细节" * (30 + i)
-                )
-                for i in range(n)
-            ]
-            out2 = []
-            for ch in _chunks(docs, batch):
-                out2.extend(summarizer.summarize_batch(ch, max_chars=int(args.max_chars)))
-            non_empty = sum(1 for x in out2 if (x or "").strip())
-            logger.info("model-test llm ok n=%d batch=%d non_empty=%d", n, batch, non_empty)
+            if args.kind in {"llm", "both"}:
+                docs = [
+                    (
+                        f"样本{i+1}：2026年2月6日，某地发生事件，涉及预算{i*10}万、周期{i+1}个月、负责人王五。"
+                        + " 细节" * (30 + i)
+                    )
+                    for i in range(n)
+                ]
+                out2 = []
+                for ch in _chunks(docs, batch):
+                    out2.extend(summarizer.summarize_batch(ch, max_chars=int(args.max_chars)))
+                non_empty = sum(1 for x in out2 if (x or "").strip())
+                logger.info("model-test llm ok n=%d batch=%d non_empty=%d", n, batch, non_empty)
 
-        return 0
+            return 0
+        except Exception:
+            logger.error("model-test 失败，完整堆栈:\n%s", traceback.format_exc())
+            return 1
 
     logger.error("unknown command")
     return 2

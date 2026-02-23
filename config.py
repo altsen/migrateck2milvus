@@ -200,7 +200,7 @@ def _build_model() -> ModelConfig:
         llm_base_url=_env_str("LLM_BASE_URL", legacy_base_url),
         api_key=(os.environ.get("GLM_API_KEY") or os.environ.get("API_KEY") or ""),
         llm_model=_env_str("LLM_MODEL", "glm-4-flashx"),
-        embedding_model=_env_str("EfMBEDDING_MODEL", "embedding-3"),
+        embedding_model=_env_str("EMBEDDING_MODEL", "embedding-3"),
         embedding_dim=_env_int("EMBEDDING_DIM", 2048),
         timeout_seconds=_env_int("MODEL_TIMEOUT_SECONDS", 60),
         embedding_batch_size=_env_int("EMBEDDING_BATCH_SIZE", 32),

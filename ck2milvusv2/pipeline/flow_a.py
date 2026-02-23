@@ -233,11 +233,18 @@ def _build_nested_array_filter(rule: SpecialNestedFlattenRule) -> dict[str, str]
     对每个 Nested 子列，使用相同的过滤条件（其它子列作为条件数组），
     确保所有子列索引对齐。
 
+    兼容性说明（CK 22.6）：
+        在 CK 22.6 中，SELECT 列别名会遮蔽同名的 Nested 子列引用。
+        例如 ``arrayFilter(..., arguments.id, arguments.id) AS `arguments.id` ``
+        会导致后续表达式中的 ``arguments.id`` 解析为已过滤的短数组而非原始列，
+        引发 SIZES_OF_ARRAYS_DOESNT_MATCH 错误。因此为 arrayFilter 结果使用
+        ``_af_{key}`` 形式别名，避免与 Nested 子列访问语法冲突。
+
     Args:
         rule: SpecialNestedFlattenRule 配置。
 
     Returns:
-        {sub_key: "arrayFilter(...) AS `prefix.key`"} 映射；
+        {sub_key: "arrayFilter(...) AS `_af_key`"} 映射；
         无需过滤的子列不出现在返回值中。
     """
     prefix = rule.prefix
@@ -295,11 +302,13 @@ def _build_nested_array_filter(rule: SpecialNestedFlattenRule) -> dict[str, str]
     cond_refs = [f"{prefix}.{c}" for c in cond_cols]
 
     # ── 为每个子列生成 arrayFilter 表达式 ──
+    # 别名使用 _af_{key} 格式，避免 CK 22.6 中 Nested 子列名遮蔽问题
     result: dict[str, str] = {}
     for k in rule.fields:
         source = f"{prefix}.{k}"
         all_arrays = ", ".join([source] + cond_refs)
-        result[k] = f"arrayFilter({lambda_str}, {all_arrays}) AS `{prefix}.{k}`"
+        safe_alias = f"_af_{k}"
+        result[k] = f"arrayFilter({lambda_str}, {all_arrays}) AS `{safe_alias}`"
 
     return result
 

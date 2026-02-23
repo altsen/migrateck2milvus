@@ -400,6 +400,10 @@ def set_checkpoint(
 ) -> None:
     """写入 checkpoint。
 
+    兼容性说明：
+    ClickHouse < 22.8 不支持 `{param:Array(String)}` 参数化绑定，
+    因此 `last_pk_values` 使用客户端拼接的 Array 字面量替代。
+
     Args:
         ck: ClickHouse 客户端。
         meta_db: meta 数据库。
@@ -414,12 +418,16 @@ def set_checkpoint(
         无。
     """
 
+    # ── 客户端拼接 Array(String) 字面量，兼容 CK 22.6 ──
+    escaped = ", ".join(f"'{_escape_ck_str(v)}'" for v in last_pk_values)
+    array_literal = f"[{escaped}]"
+
     ck.command(
         f"""
         INSERT INTO {qident(meta_db)}.{qident(META_TABLE_CHECKPOINTS)}
         (job_name, table_name, mode, cursor_field, last_cursor, last_pk_values, updated_at)
         VALUES
-        ({{job:String}}, {{tb:String}}, {{mode:String}}, {{cf:String}}, {{lc:String}}, {{pk:Array(String)}}, now())
+        ({{job:String}}, {{tb:String}}, {{mode:String}}, {{cf:String}}, {{lc:String}}, {array_literal}, now())
         """,
         parameters={
             "job": job_name,
@@ -427,9 +435,20 @@ def set_checkpoint(
             "mode": mode,
             "cf": cursor_field,
             "lc": last_cursor,
-            "pk": last_pk_values,
         },
     )
+
+
+def _escape_ck_str(s: str) -> str:
+    """转义 ClickHouse 字符串字面量中的特殊字符。
+
+    Args:
+        s: 原始字符串。
+
+    Returns:
+        转义后的字符串。
+    """
+    return s.replace("\\", "\\\\").replace("'", "\\'")
 
 
 def clear_checkpoint(

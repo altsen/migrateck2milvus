@@ -33,6 +33,10 @@ def flatten_special_nested(row: dict, cfg: TableConfig) -> list[ExpandedRow]:
     prefix = rule.prefix
 
     def _col(sub: str):
+        """读取 Nested 子列值，兼容 arrayFilter 别名（_af_{sub}）与原始列名。"""
+        af_key = f"_af_{sub}"
+        if af_key in row:
+            return row[af_key]
         return row.get(f"{prefix}.{sub}")
 
     # 使用 align_by 列确定展开长度（已通过 SQL arrayFilter 预过滤）
