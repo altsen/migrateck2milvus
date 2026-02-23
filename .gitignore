@@ -18,7 +18,7 @@ __pycache__/
 .Python
 env/
 build/
-docs/
+docs/tmp/
 tests/
 e2e/
 develop-eggs/
